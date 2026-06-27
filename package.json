@@ -1,6 +1,6 @@
 {
   "name": "nexo-descargas",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Gestor de descargas para Windows con cola, pausa y reanudación.",
   "main": "dist-electron/main.js",
   "author": "NexoDescargas contributors",
@@ -28,7 +28,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "artifactName": "${productName}-Setup-${version}.${ext}"
