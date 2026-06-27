@@ -1,0 +1,57 @@
+{
+  "name": "nexo-descargas",
+  "version": "1.0.0",
+  "description": "Gestor de descargas para Windows con cola, pausa y reanudación.",
+  "main": "dist-electron/main.js",
+  "author": "NexoDescargas contributors",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"tsc -p tsconfig.electron.json --watch\" \"wait-on tcp:5173 file:dist-electron/main.js && electron .\"",
+    "build": "tsc -p tsconfig.electron.json && vite build",
+    "test": "vitest run",
+    "dist": "npm run build && electron-builder --win nsis",
+    "dist:portable": "npm run build && electron-builder --win portable"
+  },
+  "build": {
+    "appId": "io.nexodescargas.desktop",
+    "productName": "NexoDescargas",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "NexoDescargas"
+    }
+  },
+  "dependencies": {
+    "cheerio": "^1.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "concurrently": "^9.2.1",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4",
+    "vitest": "^4.0.15",
+    "wait-on": "^9.0.3"
+  }
+}
