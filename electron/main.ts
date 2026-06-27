@@ -45,6 +45,10 @@ async function createWindow(): Promise<void> {
     else if (action === "pause" && id) manager.pause(id);
     else if (action === "retry" && id) await manager.retry(id);
     else if (action === "remove" && id) await manager.remove(id, Boolean(extra));
+    else if (action === "reorder" && id && extra && typeof extra === "object") {
+      const destination = extra as { targetId?: string; after?: boolean };
+      if (destination.targetId) manager.reorder(id, destination.targetId, Boolean(destination.after));
+    }
     else if (action === "clearCompleted") await manager.clearCompleted();
     return manager.snapshot();
   });

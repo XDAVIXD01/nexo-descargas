@@ -5,6 +5,7 @@ import type { DownloadItem, Settings } from "../electron/types";
 type Filter = "all" | "active" | "completed" | "errors";
 let state: { downloads: DownloadItem[]; settings: Settings } = { downloads: [], settings: {} as Settings };
 let filter: Filter = "all";
+let draggedId: string | null = null;
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
@@ -92,6 +93,7 @@ function statusLabel(item: DownloadItem): string {
 
 function render(): void {
   const search = (document.querySelector<HTMLInputElement>("#search")?.value || "").toLowerCase();
+  const canReorder = filter === "all" && !search;
   let items = state.downloads;
   if (filter === "active") items = items.filter(item => ["queued", "resolving", "downloading", "paused"].includes(item.status));
   if (filter === "completed") items = items.filter(item => item.status === "completed");
@@ -136,7 +138,8 @@ function render(): void {
         ? formatDuration(Math.max(0, item.totalBytes - item.downloadedBytes) / item.speed)
         : "Calculando…"
       : item.status === "completed" ? "0 s" : "";
-    return `<article class="download ${item.status}" data-id="${item.id}">
+    return `<article class="download ${item.status}" data-id="${item.id}" draggable="${canReorder}">
+      <div class="drag-handle" title="${canReorder ? "Arrastra para cambiar el orden" : "Limpia la búsqueda para reordenar"}" aria-label="Cambiar posición">⋮⋮</div>
       <div class="file-icon">${escapeHtml(item.host.slice(0, 1).toUpperCase())}</div>
       <div class="file-main">
         <div class="file-top"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><span class="badge">${escapeHtml(item.host)}</span></div>
@@ -177,6 +180,44 @@ document.querySelector("#list")!.addEventListener("click", async event => {
   const action = button.dataset.action!;
   if (action === "open" && item.savePath) return void window.nexo.openPath(item.savePath);
   await window.nexo.action(action, item.id);
+});
+
+document.querySelector("#list")!.addEventListener("dragstart", event => {
+  const card = (event.target as HTMLElement).closest<HTMLElement>(".download[draggable='true']");
+  if (!card) return;
+  draggedId = card.dataset.id || null;
+  if (!draggedId) return;
+  event.dataTransfer?.setData("text/plain", draggedId);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  requestAnimationFrame(() => card.classList.add("dragging"));
+});
+
+document.querySelector("#list")!.addEventListener("dragover", event => {
+  if (!draggedId) return;
+  const card = (event.target as HTMLElement).closest<HTMLElement>(".download");
+  if (!card || card.dataset.id === draggedId) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  document.querySelectorAll(".drop-before,.drop-after").forEach(node => node.classList.remove("drop-before", "drop-after"));
+  const after = event.clientY > card.getBoundingClientRect().top + card.offsetHeight / 2;
+  card.classList.add(after ? "drop-after" : "drop-before");
+});
+
+document.querySelector("#list")!.addEventListener("drop", async event => {
+  const card = (event.target as HTMLElement).closest<HTMLElement>(".download");
+  if (!draggedId || !card?.dataset.id || card.dataset.id === draggedId) return;
+  event.preventDefault();
+  const after = event.clientY > card.getBoundingClientRect().top + card.offsetHeight / 2;
+  const sourceId = draggedId;
+  draggedId = null;
+  await window.nexo.action("reorder", sourceId, { targetId: card.dataset.id, after });
+});
+
+document.querySelector("#list")!.addEventListener("dragend", () => {
+  draggedId = null;
+  document.querySelectorAll(".dragging,.drop-before,.drop-after").forEach(node =>
+    node.classList.remove("dragging", "drop-before", "drop-after")
+  );
 });
 
 document.querySelectorAll<HTMLButtonElement>("[data-filter]").forEach(button => button.addEventListener("click", () => {

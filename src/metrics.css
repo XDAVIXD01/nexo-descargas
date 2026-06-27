@@ -6,3 +6,36 @@
 .meta .eta {
   color: #91a8dd;
 }
+
+.download {
+  grid-template-columns: 18px 43px 1fr auto;
+}
+
+.drag-handle {
+  color: #4f5d78;
+  cursor: grab;
+  font-size: 15px;
+  letter-spacing: -4px;
+  user-select: none;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+}
+
+.download[draggable="false"] .drag-handle {
+  cursor: not-allowed;
+  opacity: .35;
+}
+
+.download.dragging {
+  opacity: .32;
+  transform: scale(.99);
+}
+
+.download.drop-before {
+  box-shadow: 0 -3px 0 #766bff;
+}
+
+.download.drop-after {
+  box-shadow: 0 3px 0 #4fc7ff;
+}

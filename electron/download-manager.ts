@@ -109,6 +109,20 @@ export class DownloadManager extends EventEmitter {
     this.changed();
   }
 
+  reorder(id: string, targetId: string, after = false): void {
+    if (id === targetId) return;
+    const fromIndex = this.store.downloads.findIndex(item => item.id === id);
+    if (fromIndex < 0) return;
+    const [item] = this.store.downloads.splice(fromIndex, 1);
+    const targetIndex = this.store.downloads.findIndex(value => value.id === targetId);
+    if (targetIndex < 0) {
+      this.store.downloads.splice(fromIndex, 0, item);
+      return;
+    }
+    this.store.downloads.splice(targetIndex + (after ? 1 : 0), 0, item);
+    this.changed();
+  }
+
   updateSettings(patch: Partial<Settings>): Settings {
     const settings = this.store.setSettings(patch);
     void this.pump();
