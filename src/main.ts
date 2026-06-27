@@ -1,4 +1,5 @@
 import "./style.css";
+import "./metrics.css";
 import type { DownloadItem, Settings } from "../electron/types";
 
 type Filter = "all" | "active" | "completed" | "errors";
@@ -65,12 +66,25 @@ const formatBytes = (bytes = 0): string => {
   return `${(bytes / 1024 ** index).toFixed(index > 1 ? 1 : 0)} ${units[index]}`;
 };
 
+const formatDuration = (seconds: number): string => {
+  if (!Number.isFinite(seconds) || seconds < 0) return "Calculando…";
+  if (seconds < 60) return `${Math.max(1, Math.ceil(seconds))} s`;
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) return `${hours} h${remainingMinutes ? ` ${remainingMinutes} min` : ""}`;
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return `${days} d${remainingHours ? ` ${remainingHours} h` : ""}`;
+};
+
 const escapeHtml = (value: string): string =>
   value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]!);
 
 function statusLabel(item: DownloadItem): string {
   const labels: Record<string, string> = {
-    queued: "En cola", resolving: "Resolviendo enlace…", downloading: "Descargando",
+    checking: "Consultando nombre y tamaño…", queued: "En cola", resolving: "Preparando descarga…", downloading: "Descargando",
     paused: "En pausa", completed: "Completada", error: "Error", cancelled: "Cancelada"
   };
   return labels[item.status] || item.status;
@@ -84,9 +98,27 @@ function render(): void {
   if (filter === "errors") items = items.filter(item => item.status === "error");
   if (search) items = items.filter(item => `${item.name} ${item.host}`.toLowerCase().includes(search));
   const active = state.downloads.filter(item => ["resolving", "downloading"].includes(item.status));
+  const knownItems = state.downloads.filter(item => item.totalBytes);
+  const totalBytes = knownItems.reduce((sum, item) => sum + (item.totalBytes || 0), 0);
+  const downloadedBytes = knownItems.reduce(
+    (sum, item) => sum + Math.min(item.downloadedBytes, item.totalBytes || item.downloadedBytes),
+    0
+  );
+  const totalSpeed = active.reduce((sum, item) => sum + item.speed, 0);
+  const remainingBytes = Math.max(0, totalBytes - downloadedBytes);
+  const overallEta = totalBytes > 0 && remainingBytes === 0
+    ? "Completado"
+    : totalSpeed > 0 && remainingBytes > 0
+      ? formatDuration(remainingBytes / totalSpeed)
+      : "En espera";
   document.querySelector("#all-count")!.textContent = String(state.downloads.length);
   document.querySelector("#active-count")!.textContent = String(active.length);
-  document.querySelector("#summary")!.textContent = `${state.downloads.length} elemento${state.downloads.length === 1 ? "" : "s"} · ${formatBytes(active.reduce((sum, item) => sum + item.speed, 0))}/s`;
+  document.querySelector("#summary")!.innerHTML =
+    `${state.downloads.length} elemento${state.downloads.length === 1 ? "" : "s"}` +
+    ` · <b>${formatBytes(totalBytes)} en total</b>` +
+    (knownItems.length < state.downloads.length ? " + archivos consultándose" : "") +
+    ` · ${formatBytes(totalSpeed)}/s` +
+    ` · Tiempo restante: <b>${overallEta}</b>`;
 
   const list = document.querySelector("#list")!;
   if (!items.length) {
@@ -99,11 +131,16 @@ function render(): void {
     const canStart = ["paused", "queued"].includes(item.status);
     const action = canPause ? "pause" : canStart ? "start" : item.status === "error" ? "retry" : "";
     const actionText = action === "pause" ? "Ⅱ" : action === "retry" ? "↻" : "▶";
+    const itemEta = item.status === "downloading"
+      ? item.speed > 0 && item.totalBytes
+        ? formatDuration(Math.max(0, item.totalBytes - item.downloadedBytes) / item.speed)
+        : "Calculando…"
+      : item.status === "completed" ? "0 s" : "";
     return `<article class="download ${item.status}" data-id="${item.id}">
       <div class="file-icon">${escapeHtml(item.host.slice(0, 1).toUpperCase())}</div>
       <div class="file-main">
         <div class="file-top"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><span class="badge">${escapeHtml(item.host)}</span></div>
-        <div class="meta"><span>${statusLabel(item)}</span><span>${formatBytes(item.downloadedBytes)}${item.totalBytes ? ` de ${formatBytes(item.totalBytes)}` : ""}</span>${item.speed ? `<span>${formatBytes(item.speed)}/s</span>` : ""}</div>
+        <div class="meta"><span>${statusLabel(item)}</span><span>${formatBytes(item.downloadedBytes)}${item.totalBytes ? ` de ${formatBytes(item.totalBytes)}` : ""}</span>${item.speed ? `<span>${formatBytes(item.speed)}/s</span>` : ""}${itemEta ? `<span class="eta">⏱ ${itemEta} restantes</span>` : ""}</div>
         <div class="progress"><i style="width:${progress}%"></i></div>
         ${item.error ? `<div class="error-text">${escapeHtml(item.error)}</div>` : ""}
       </div>

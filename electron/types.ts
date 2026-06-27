@@ -1,4 +1,5 @@
 export type DownloadStatus =
+  | "checking"
   | "queued"
   | "resolving"
   | "downloading"

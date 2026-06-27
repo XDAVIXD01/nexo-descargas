@@ -20,7 +20,11 @@ export class JsonStore {
       const raw = JSON.parse(await fs.readFile(this.file, "utf8")) as Partial<State>;
       this.state.downloads = (raw.downloads || []).map(item => ({
         ...item,
-        status: item.status === "downloading" || item.status === "resolving" ? "paused" : item.status,
+        status: item.status === "checking"
+          ? "queued"
+          : item.status === "downloading" || item.status === "resolving"
+            ? "paused"
+            : item.status,
         speed: 0
       }));
       this.state.settings = { ...this.state.settings, ...raw.settings };

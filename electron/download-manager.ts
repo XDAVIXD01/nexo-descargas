@@ -36,6 +36,7 @@ export class DownloadManager extends EventEmitter {
   async add(rawText: string): Promise<AddResult> {
     const urls = [...new Set(rawText.match(/https?:\/\/[^\s<>"']+/gi) || [])];
     const result: AddResult = { added: 0, rejected: [] };
+    const addedItems: DownloadItem[] = [];
     for (const sourceUrl of urls) {
       if (!supportsUrl(sourceUrl)) {
         result.rejected.push({ url: sourceUrl, reason: "Sitio no compatible" });
@@ -45,20 +46,22 @@ export class DownloadManager extends EventEmitter {
         result.rejected.push({ url: sourceUrl, reason: "El enlace ya está en la lista" });
         continue;
       }
-      this.store.downloads.unshift({
+      const item: DownloadItem = {
         id: randomUUID(),
         sourceUrl,
-        name: new URL(sourceUrl).pathname.split("/").filter(Boolean).pop() || "Resolviendo…",
+        name: "Consultando archivo…",
         host: new URL(sourceUrl).hostname,
-        status: "queued",
+        status: "checking",
         downloadedBytes: 0,
         speed: 0,
         addedAt: Date.now()
-      });
+      };
+      this.store.downloads.unshift(item);
+      addedItems.push(item);
       result.added++;
     }
     this.changed();
-    if (this.store.settings.startAutomatically) void this.pump();
+    addedItems.forEach(item => void this.inspect(item));
     return result;
   }
 
@@ -120,6 +123,27 @@ export class DownloadManager extends EventEmitter {
   private changed(): void {
     this.store.schedule();
     this.emit("changed", this.snapshot());
+  }
+
+  private async inspect(item: DownloadItem): Promise<void> {
+    try {
+      const resolved = await resolveLink(item.sourceUrl);
+      if (!this.find(item.id)) return;
+      Object.assign(item, {
+        directUrl: resolved.directUrl,
+        name: resolved.fileName,
+        host: resolved.host,
+        totalBytes: resolved.size,
+        status: "queued" as const,
+        error: undefined
+      });
+    } catch (error: any) {
+      if (!this.find(item.id)) return;
+      item.status = "error";
+      item.error = `No se pudieron consultar los datos: ${error?.message || "error desconocido"}`;
+    }
+    this.changed();
+    if (this.store.settings.startAutomatically && item.status === "queued") void this.pump();
   }
 
   private async pump(): Promise<void> {
