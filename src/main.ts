@@ -235,6 +235,10 @@ document.querySelector("#clear-btn")!.addEventListener("click", () => window.nex
 
 const dialog = document.querySelector<HTMLDialogElement>("#settings-dialog")!;
 document.querySelector("#settings-btn")!.addEventListener("click", () => {
+  if (!state.settings?.downloadDirectory) {
+    toast("La configuración todavía se está cargando.", true);
+    return;
+  }
   (document.querySelector("#directory") as HTMLInputElement).value = state.settings.downloadDirectory;
   (document.querySelector("#concurrent") as HTMLInputElement).value = String(state.settings.concurrentDownloads);
   (document.querySelector("#speed-limit") as HTMLInputElement).value = String(state.settings.speedLimitKbps);

@@ -31,6 +31,7 @@ async function createWindow(): Promise<void> {
     startAutomatically: true
   });
   await store.load();
+  await store.save();
   const manager = new DownloadManager(store);
   activeStore = store;
 
@@ -49,23 +50,6 @@ async function createWindow(): Promise<void> {
       sandbox: true
     }
   });
-
-  const devUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devUrl) await mainWindow.loadURL(devUrl);
-  else await mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
-  manager.resumePending();
-
-  if (!tray) {
-    tray = new Tray(await app.getFileIcon(process.execPath, { size: "small" }));
-    tray.setToolTip("NexoDescargas");
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: "Mostrar NexoDescargas", click: showWindow },
-      { type: "separator" },
-      { label: "Salir completamente", click: () => void quitApplication() }
-    ]));
-    tray.on("click", showWindow);
-    tray.on("double-click", showWindow);
-  }
 
   manager.on("changed", state => mainWindow?.webContents.send("state:changed", state));
   ipcMain.handle("state:get", () => manager.snapshot());
@@ -88,6 +72,23 @@ async function createWindow(): Promise<void> {
     return result.filePaths[0];
   });
   ipcMain.handle("path:open", (_event, target: string) => shell.showItemInFolder(target));
+
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devUrl) await mainWindow.loadURL(devUrl);
+  else await mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
+
+  if (!tray) {
+    tray = new Tray(await app.getFileIcon(process.execPath, { size: "small" }));
+    tray.setToolTip("NexoDescargas");
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: "Mostrar NexoDescargas", click: showWindow },
+      { type: "separator" },
+      { label: "Salir completamente", click: () => void quitApplication() }
+    ]));
+    tray.on("click", showWindow);
+    tray.on("double-click", showWindow);
+  }
+  manager.resumePending();
 
   mainWindow.on("close", event => {
     if (isQuitting) return;

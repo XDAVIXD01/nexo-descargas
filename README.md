@@ -13,6 +13,8 @@ Al cerrar la ventana, NexoDescargas permanece en la bandeja del sistema para que
 
 La cola, las preferencias y el progreso se guardan en disco. Tras un cierre inesperado o apagón, la aplicación verifica el tamaño real de los archivos parciales y reanuda las descargas pendientes.
 
+En Windows, las preferencias se almacenan en `%APPDATA%\nexo-descargas\config.json`, con una copia de seguridad `config.json.bak`. El estado de la cola se conserva por separado en `state.json`.
+
 ## Desarrollo
 
 Requiere Node.js 20 o superior.

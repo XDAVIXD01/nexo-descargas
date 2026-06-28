@@ -11,9 +11,11 @@ export class JsonStore {
   private state: State;
   private saveTimer?: NodeJS.Timeout;
   private saveChain: Promise<void> = Promise.resolve();
+  private readonly settingsFile: string;
 
-  constructor(private readonly file: string, defaults: Settings) {
+  constructor(private readonly file: string, defaults: Settings, settingsFile?: string) {
     this.state = { downloads: [], settings: defaults };
+    this.settingsFile = settingsFile || path.join(path.dirname(file), "config.json");
   }
 
   async load(): Promise<void> {
@@ -46,8 +48,12 @@ export class JsonStore {
           resumeOnLaunch: interrupted
         } as DownloadItem;
       }));
-      this.state.settings = this.normalizeSettings({ ...this.state.settings, ...raw.settings });
     }
+    const storedSettings = await this.readJson<Partial<Settings>>(this.settingsFile)
+      || await this.readJson<Partial<Settings>>(`${this.settingsFile}.bak`)
+      || raw?.settings
+      || {};
+    this.state.settings = this.normalizeSettings({ ...this.state.settings, ...storedSettings });
   }
 
   get downloads(): DownloadItem[] {
@@ -72,22 +78,36 @@ export class JsonStore {
   async save(): Promise<void> {
     clearTimeout(this.saveTimer);
     const snapshot = JSON.stringify(this.state, null, 2);
+    const settingsSnapshot = JSON.stringify(this.state.settings, null, 2);
     this.saveChain = this.saveChain.then(async () => {
-      await fs.mkdir(path.dirname(this.file), { recursive: true });
-      const temporary = `${this.file}.tmp`;
-      try {
-        await fs.copyFile(this.file, `${this.file}.bak`);
-      } catch {}
-      await fs.writeFile(temporary, snapshot, "utf8");
-      try {
-        await fs.rename(temporary, this.file);
-      } catch (error: any) {
-        if (!["EEXIST", "EPERM"].includes(error?.code)) throw error;
-        await fs.rm(this.file, { force: true });
-        await fs.rename(temporary, this.file);
-      }
+      await this.writeAtomic(this.file, snapshot);
+      await this.writeAtomic(this.settingsFile, settingsSnapshot);
     }).catch(error => console.error("No se pudo guardar el estado", error));
     await this.saveChain;
+  }
+
+  private async readJson<T>(file: string): Promise<T | undefined> {
+    try {
+      return JSON.parse(await fs.readFile(file, "utf8")) as T;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async writeAtomic(file: string, contents: string): Promise<void> {
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const temporary = `${file}.tmp`;
+    try {
+      await fs.copyFile(file, `${file}.bak`);
+    } catch {}
+    await fs.writeFile(temporary, contents, "utf8");
+    try {
+      await fs.rename(temporary, file);
+    } catch (error: any) {
+      if (!["EEXIST", "EPERM"].includes(error?.code)) throw error;
+      await fs.rm(file, { force: true });
+      await fs.rename(temporary, file);
+    }
   }
 
   private normalizeSettings(settings: Settings): Settings {

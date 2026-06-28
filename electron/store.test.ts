@@ -60,6 +60,10 @@ describe("recuperación persistente", () => {
       speedLimitKbps: 2500,
       startAutomatically: false
     });
+
+    await store.save();
+    const config = JSON.parse(await fs.readFile(path.join(directory, "config.json"), "utf8"));
+    expect(config).toEqual(store.settings);
   });
 
   it("usa la copia de seguridad cuando el estado principal está corrupto", async () => {
