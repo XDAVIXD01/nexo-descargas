@@ -2,6 +2,7 @@ export type DownloadStatus =
   | "checking"
   | "queued"
   | "resolving"
+  | "recovering"
   | "downloading"
   | "retrying"
   | "paused"
@@ -25,6 +26,7 @@ export interface DownloadItem {
   retryAttempt?: number;
   retryAt?: number;
   resumeOnLaunch?: boolean;
+  recoveryBytesRemaining?: number;
 }
 
 export interface Settings {

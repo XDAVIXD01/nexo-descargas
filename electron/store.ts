@@ -38,14 +38,15 @@ export class JsonStore {
             downloadedBytes = (await fs.stat(item.savePath)).size;
           } catch {}
         }
-        const interrupted = ["checking", "downloading", "resolving", "retrying"].includes(item.status);
+        const interrupted = ["checking", "downloading", "recovering", "resolving", "retrying"].includes(item.status);
         return {
         ...item,
           status: interrupted ? "queued" : item.status,
           downloadedBytes,
           speed: 0,
           retryAt: undefined,
-          resumeOnLaunch: interrupted
+          resumeOnLaunch: interrupted,
+          recoveryBytesRemaining: undefined
         } as DownloadItem;
       }));
     }

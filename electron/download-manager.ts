@@ -13,6 +13,8 @@ class DownloadHttpError extends Error {
   }
 }
 
+class TransientDownloadError extends Error {}
+
 function uniquePath(directory: string, name: string, current?: string): string {
   const base = path.join(directory, name);
   if (current === base || !existsSync(base)) return base;
@@ -168,6 +170,7 @@ export class DownloadManager extends EventEmitter {
     if (error instanceof DownloadHttpError) {
       return [401, 403, 408, 409, 425, 429].includes(error.status) || error.status >= 500;
     }
+    if (error instanceof TransientDownloadError) return true;
     const code = String(error?.code || error?.cause?.code || "");
     const message = String(error?.message || "");
     return /ECONN|ETIMEDOUT|ENET|EAI_AGAIN|UND_ERR|fetch failed|socket|network/i.test(`${code} ${message}`);
@@ -219,7 +222,7 @@ export class DownloadManager extends EventEmitter {
     this.pumping = true;
     try {
       while (true) {
-        const active = this.store.downloads.filter(item => ["resolving", "downloading"].includes(item.status)).length;
+        const active = this.store.downloads.filter(item => ["resolving", "recovering", "downloading"].includes(item.status)).length;
         const slots = Math.max(0, this.store.settings.concurrentDownloads - active);
         if (!slots) break;
         const next = this.store.downloads.filter(item => item.status === "queued").slice(0, slots);
@@ -262,14 +265,22 @@ export class DownloadManager extends EventEmitter {
         headers,
         signal: controller.signal
       });
-      if (existing > 0 && response.status === 200) {
-        existing = 0;
-        item.downloadedBytes = 0;
+      if (response.status === 416 && item.totalBytes && existing >= item.totalBytes) {
+        item.status = "completed";
+        item.downloadedBytes = item.totalBytes;
+        item.speed = 0;
+        item.error = undefined;
+        return;
       }
       if (!response.ok && response.status !== 206) throw new DownloadHttpError(response.status);
       const contentLength = Number(response.headers.get("content-length")) || 0;
-      item.totalBytes = existing + contentLength || item.totalBytes;
-      item.status = "downloading";
+      const serverSupportsResume = existing > 0 && response.status === 206;
+      let bytesToSkip = existing > 0 && response.status === 200 ? existing : 0;
+      item.totalBytes = response.status === 206
+        ? existing + contentLength || item.totalBytes
+        : contentLength || item.totalBytes;
+      item.recoveryBytesRemaining = bytesToSkip || undefined;
+      item.status = bytesToSkip ? "recovering" : "downloading";
       this.changed();
 
       output = createWriteStream(item.savePath, { flags: existing ? "a" : "w" });
@@ -280,28 +291,42 @@ export class DownloadManager extends EventEmitter {
       const reader = response.body?.getReader();
       if (!reader) throw new Error("El servidor no entregó datos");
       const transferStartedAt = Date.now();
-      const transferStartedBytes = item.downloadedBytes;
+      let networkBytes = 0;
       let lastUiUpdate = transferStartedAt;
-      let samples = [{ at: transferStartedAt, bytes: item.downloadedBytes }];
+      let samples = [{ at: transferStartedAt, bytes: networkBytes }];
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (controller.signal.aborted) throw new DOMException("Abortado", "AbortError");
-        if (!output.write(value)) await new Promise<void>(resolve => output!.once("drain", resolve));
-        item.downloadedBytes += value.byteLength;
+        networkBytes += value.byteLength;
+        let writable = value;
+        if (!serverSupportsResume && bytesToSkip > 0) {
+          const skipped = Math.min(bytesToSkip, writable.byteLength);
+          bytesToSkip -= skipped;
+          writable = writable.subarray(skipped);
+          item.recoveryBytesRemaining = bytesToSkip || undefined;
+          if (bytesToSkip === 0) {
+            item.status = "downloading";
+            this.changed();
+          }
+        }
+        if (writable.byteLength > 0) {
+          if (!output.write(writable)) await new Promise<void>(resolve => output!.once("drain", resolve));
+          item.downloadedBytes += writable.byteLength;
+        }
         const limit = this.store.settings.speedLimitKbps * 1024;
         if (limit > 0) {
-          const expectedElapsed = ((item.downloadedBytes - transferStartedBytes) / limit) * 1000;
+          const expectedElapsed = (networkBytes / limit) * 1000;
           const delay = expectedElapsed - (Date.now() - transferStartedAt);
           if (delay > 1) await new Promise(resolve => setTimeout(resolve, delay));
         }
         const now = Date.now();
-        samples.push({ at: now, bytes: item.downloadedBytes });
+        samples.push({ at: now, bytes: networkBytes });
         samples = samples.filter(sample => sample.at >= now - 5000);
         if (now - lastUiUpdate >= 1000) {
           const oldest = samples[0];
           const elapsed = now - oldest.at;
-          item.speed = elapsed > 0 ? ((item.downloadedBytes - oldest.bytes) * 1000) / elapsed : 0;
+          item.speed = elapsed > 0 ? ((networkBytes - oldest.bytes) * 1000) / elapsed : 0;
           lastUiUpdate = now;
           this.changed();
         }
@@ -311,10 +336,16 @@ export class DownloadManager extends EventEmitter {
         output!.end(resolve);
       });
       output = undefined;
+      if (item.totalBytes && item.downloadedBytes < item.totalBytes) {
+        throw new TransientDownloadError(
+          `La conexión terminó antes de completar el archivo (${item.downloadedBytes} de ${item.totalBytes} bytes)`
+        );
+      }
       item.status = "completed";
       item.speed = 0;
       item.retryAttempt = 0;
       item.retryAt = undefined;
+      item.recoveryBytesRemaining = undefined;
       item.error = undefined;
       if (!item.totalBytes) item.totalBytes = item.downloadedBytes;
     } catch (error: any) {

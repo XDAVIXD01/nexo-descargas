@@ -13,6 +13,8 @@ Al cerrar la ventana, NexoDescargas permanece en la bandeja del sistema para que
 
 La cola, las preferencias y el progreso se guardan en disco. Tras un cierre inesperado o apagón, la aplicación verifica el tamaño real de los archivos parciales y reanuda las descargas pendientes.
 
+Cuando un servidor admite HTTP Range, la reanudación continúa directamente desde el byte guardado. Si un servidor ignora Range (como ocurre actualmente con Marketcat), NexoDescargas conserva el archivo parcial, vuelve a leer por red el tramo previo sin escribirlo de nuevo y continúa anexando desde el punto correcto. La interfaz muestra **Recuperando punto de reanudación…** durante ese proceso.
+
 En Windows, las preferencias se almacenan en `%APPDATA%\nexo-descargas\config.json`, con una copia de seguridad `config.json.bak`. El estado de la cola se conserva por separado en `state.json`.
 
 ## Desarrollo

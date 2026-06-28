@@ -89,7 +89,8 @@ function statusLabel(item: DownloadItem): string {
     return `Reintentando en ${seconds} s`;
   }
   const labels: Record<string, string> = {
-    checking: "Consultando nombre y tamaño…", queued: "En cola", resolving: "Preparando descarga…", downloading: "Descargando",
+    checking: "Consultando nombre y tamaño…", queued: "En cola", resolving: "Preparando descarga…",
+    recovering: "Recuperando punto de reanudación…", downloading: "Descargando",
     paused: "En pausa", completed: "Completada", error: "Error", cancelled: "Cancelada"
   };
   return labels[item.status] || item.status;
@@ -103,7 +104,7 @@ function render(): void {
   if (filter === "completed") items = items.filter(item => item.status === "completed");
   if (filter === "errors") items = items.filter(item => ["error", "retrying"].includes(item.status));
   if (search) items = items.filter(item => `${item.name} ${item.host}`.toLowerCase().includes(search));
-  const active = state.downloads.filter(item => ["resolving", "downloading"].includes(item.status));
+  const active = state.downloads.filter(item => ["resolving", "recovering", "downloading"].includes(item.status));
   const knownItems = state.downloads.filter(item => item.totalBytes);
   const totalBytes = knownItems.reduce((sum, item) => sum + (item.totalBytes || 0), 0);
   const downloadedBytes = knownItems.reduce(
@@ -111,7 +112,8 @@ function render(): void {
     0
   );
   const totalSpeed = active.reduce((sum, item) => sum + item.speed, 0);
-  const remainingBytes = Math.max(0, totalBytes - downloadedBytes);
+  const recoveryBytes = state.downloads.reduce((sum, item) => sum + (item.recoveryBytesRemaining || 0), 0);
+  const remainingBytes = Math.max(0, totalBytes - downloadedBytes) + recoveryBytes;
   const overallEta = totalBytes > 0 && remainingBytes === 0
     ? "Completado"
     : totalSpeed > 0 && remainingBytes > 0
@@ -133,13 +135,13 @@ function render(): void {
   }
   list.innerHTML = items.map(item => {
     const progress = item.totalBytes ? Math.min(100, item.downloadedBytes / item.totalBytes * 100) : 0;
-    const canPause = ["downloading", "resolving", "retrying"].includes(item.status);
+    const canPause = ["downloading", "recovering", "resolving", "retrying"].includes(item.status);
     const canStart = ["paused", "queued"].includes(item.status);
     const action = canPause ? "pause" : canStart ? "start" : item.status === "error" ? "retry" : "";
     const actionText = action === "pause" ? "Ⅱ" : action === "retry" ? "↻" : "▶";
-    const itemEta = item.status === "downloading"
+    const itemEta = ["downloading", "recovering"].includes(item.status)
       ? item.speed > 0 && item.totalBytes
-        ? formatDuration(Math.max(0, item.totalBytes - item.downloadedBytes) / item.speed)
+        ? formatDuration((Math.max(0, item.totalBytes - item.downloadedBytes) + (item.recoveryBytesRemaining || 0)) / item.speed)
         : "Calculando…"
       : item.status === "completed" ? "0 s" : "";
     return `<article class="download ${item.status}" data-id="${item.id}" draggable="${canReorder}">
