@@ -84,6 +84,10 @@ const escapeHtml = (value: string): string =>
   value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]!);
 
 function statusLabel(item: DownloadItem): string {
+  if (item.status === "retrying") {
+    const seconds = Math.max(1, Math.ceil(((item.retryAt || Date.now()) - Date.now()) / 1000));
+    return `Reintentando en ${seconds} s`;
+  }
   const labels: Record<string, string> = {
     checking: "Consultando nombre y tamaño…", queued: "En cola", resolving: "Preparando descarga…", downloading: "Descargando",
     paused: "En pausa", completed: "Completada", error: "Error", cancelled: "Cancelada"
@@ -97,7 +101,7 @@ function render(): void {
   let items = state.downloads;
   if (filter === "active") items = items.filter(item => ["queued", "resolving", "downloading", "paused"].includes(item.status));
   if (filter === "completed") items = items.filter(item => item.status === "completed");
-  if (filter === "errors") items = items.filter(item => item.status === "error");
+  if (filter === "errors") items = items.filter(item => ["error", "retrying"].includes(item.status));
   if (search) items = items.filter(item => `${item.name} ${item.host}`.toLowerCase().includes(search));
   const active = state.downloads.filter(item => ["resolving", "downloading"].includes(item.status));
   const knownItems = state.downloads.filter(item => item.totalBytes);
@@ -117,7 +121,7 @@ function render(): void {
   document.querySelector("#active-count")!.textContent = String(active.length);
   document.querySelector("#summary")!.innerHTML =
     `${state.downloads.length} elemento${state.downloads.length === 1 ? "" : "s"}` +
-    ` · <b>${formatBytes(totalBytes)} en total</b>` +
+    ` · <b>${formatBytes(downloadedBytes)} descargados de ${formatBytes(totalBytes)}</b>` +
     (knownItems.length < state.downloads.length ? " + archivos consultándose" : "") +
     ` · ${formatBytes(totalSpeed)}/s` +
     ` · Tiempo restante: <b>${overallEta}</b>`;
@@ -129,7 +133,7 @@ function render(): void {
   }
   list.innerHTML = items.map(item => {
     const progress = item.totalBytes ? Math.min(100, item.downloadedBytes / item.totalBytes * 100) : 0;
-    const canPause = ["downloading", "resolving"].includes(item.status);
+    const canPause = ["downloading", "resolving", "retrying"].includes(item.status);
     const canStart = ["paused", "queued"].includes(item.status);
     const action = canPause ? "pause" : canStart ? "start" : item.status === "error" ? "retry" : "";
     const actionText = action === "pause" ? "Ⅱ" : action === "retry" ? "↻" : "▶";

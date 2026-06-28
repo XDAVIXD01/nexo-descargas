@@ -7,7 +7,11 @@ Gestor de descargas de escritorio para Windows, pensado para enlaces públicos d
 - LolaUp
 - Solred
 
-Incluye cola persistente, descargas simultáneas, pausa y reanudación mediante HTTP Range, límite de velocidad, búsqueda, detección de duplicados y un instalador NSIS.
+Incluye cola persistente y reordenable, descargas simultáneas, pausa y reanudación mediante HTTP Range, reintentos automáticos, medición suavizada de velocidad, tiempos estimados, límite de velocidad, búsqueda, detección de duplicados y un instalador NSIS.
+
+Al cerrar la ventana, NexoDescargas permanece en la bandeja del sistema para que las transferencias continúen. La opción **Salir completamente** está disponible en el menú del icono de la bandeja.
+
+La cola, las preferencias y el progreso se guardan en disco. Tras un cierre inesperado o apagón, la aplicación verifica el tamaño real de los archivos parciales y reanuda las descargas pendientes.
 
 ## Desarrollo
 

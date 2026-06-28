@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell, Tray } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JsonStore } from "./store.js";
@@ -6,6 +6,22 @@ import { DownloadManager } from "./download-manager.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let isQuitting = false;
+let activeStore: JsonStore | null = null;
+
+function showWindow(): void {
+  if (!mainWindow) return;
+  mainWindow.show();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+}
+
+async function quitApplication(): Promise<void> {
+  isQuitting = true;
+  await activeStore?.save();
+  app.quit();
+}
 
 async function createWindow(): Promise<void> {
   const store = new JsonStore(path.join(app.getPath("userData"), "state.json"), {
@@ -16,6 +32,7 @@ async function createWindow(): Promise<void> {
   });
   await store.load();
   const manager = new DownloadManager(store);
+  activeStore = store;
 
   mainWindow = new BrowserWindow({
     width: 1220,
@@ -36,6 +53,19 @@ async function createWindow(): Promise<void> {
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) await mainWindow.loadURL(devUrl);
   else await mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
+  manager.resumePending();
+
+  if (!tray) {
+    tray = new Tray(await app.getFileIcon(process.execPath, { size: "small" }));
+    tray.setToolTip("NexoDescargas");
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: "Mostrar NexoDescargas", click: showWindow },
+      { type: "separator" },
+      { label: "Salir completamente", click: () => void quitApplication() }
+    ]));
+    tray.on("click", showWindow);
+    tray.on("double-click", showWindow);
+  }
 
   manager.on("changed", state => mainWindow?.webContents.send("state:changed", state));
   ipcMain.handle("state:get", () => manager.snapshot());
@@ -55,21 +85,26 @@ async function createWindow(): Promise<void> {
   ipcMain.handle("settings:update", (_event, patch) => manager.updateSettings(patch));
   ipcMain.handle("directory:choose", async () => {
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ["openDirectory", "createDirectory"] });
-    if (!result.canceled && result.filePaths[0]) manager.updateSettings({ downloadDirectory: result.filePaths[0] });
     return result.filePaths[0];
   });
   ipcMain.handle("path:open", (_event, target: string) => shell.showItemInFolder(target));
 
-  mainWindow.on("closed", () => {
-    void store.save();
-    mainWindow = null;
+  mainWindow.on("close", event => {
+    if (isQuitting) return;
+    event.preventDefault();
+    mainWindow?.hide();
   });
 }
 
 app.whenReady().then(createWindow);
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  // La aplicación permanece en la bandeja para no interrumpir descargas.
 });
 app.on("activate", () => {
-  if (!BrowserWindow.getAllWindows().length) void createWindow();
+  if (mainWindow) showWindow();
+  else void createWindow();
+});
+app.on("before-quit", () => {
+  isQuitting = true;
+  void activeStore?.save();
 });

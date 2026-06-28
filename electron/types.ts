@@ -3,6 +3,7 @@ export type DownloadStatus =
   | "queued"
   | "resolving"
   | "downloading"
+  | "retrying"
   | "paused"
   | "completed"
   | "error"
@@ -21,6 +22,9 @@ export interface DownloadItem {
   addedAt: number;
   savePath?: string;
   error?: string;
+  retryAttempt?: number;
+  retryAt?: number;
+  resumeOnLaunch?: boolean;
 }
 
 export interface Settings {

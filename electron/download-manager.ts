@@ -7,6 +7,12 @@ import type { AddResult, DownloadItem, Settings } from "./types.js";
 import { JsonStore } from "./store.js";
 import { resolveLink, supportsUrl } from "./resolvers.js";
 
+class DownloadHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`El servidor respondió ${status}`);
+  }
+}
+
 function uniquePath(directory: string, name: string, current?: string): string {
   const base = path.join(directory, name);
   if (current === base || !existsSync(base)) return base;
@@ -20,6 +26,7 @@ function uniquePath(directory: string, name: string, current?: string): string {
 
 export class DownloadManager extends EventEmitter {
   private controllers = new Map<string, AbortController>();
+  private retryTimers = new Map<string, NodeJS.Timeout>();
   private pumping = false;
 
   constructor(private readonly store: JsonStore) {
@@ -56,7 +63,7 @@ export class DownloadManager extends EventEmitter {
         speed: 0,
         addedAt: Date.now()
       };
-      this.store.downloads.unshift(item);
+      this.store.downloads.push(item);
       addedItems.push(item);
       result.added++;
     }
@@ -68,6 +75,7 @@ export class DownloadManager extends EventEmitter {
   async start(id: string): Promise<void> {
     const item = this.find(id);
     if (!item || item.status === "completed" || item.status === "downloading") return;
+    this.clearRetry(id);
     item.status = "queued";
     item.error = undefined;
     this.changed();
@@ -78,6 +86,7 @@ export class DownloadManager extends EventEmitter {
     const item = this.find(id);
     if (!item) return;
     this.controllers.get(id)?.abort();
+    this.clearRetry(id);
     if (item.status !== "completed") item.status = "paused";
     item.speed = 0;
     this.changed();
@@ -86,9 +95,12 @@ export class DownloadManager extends EventEmitter {
   async retry(id: string): Promise<void> {
     const item = this.find(id);
     if (!item) return;
+    this.clearRetry(id);
     item.status = "queued";
     item.error = undefined;
     item.directUrl = undefined;
+    item.retryAttempt = 0;
+    item.retryAt = undefined;
     this.changed();
     await this.pump();
   }
@@ -98,6 +110,7 @@ export class DownloadManager extends EventEmitter {
     if (index < 0) return;
     const [item] = this.store.downloads.splice(index, 1);
     this.controllers.get(id)?.abort();
+    this.clearRetry(id);
     if (deleteFile && item.savePath) await fs.rm(item.savePath, { force: true }).catch(() => undefined);
     this.changed();
   }
@@ -130,6 +143,12 @@ export class DownloadManager extends EventEmitter {
     return settings;
   }
 
+  resumePending(): void {
+    const wasInterrupted = this.store.downloads.some(item => item.resumeOnLaunch);
+    this.store.downloads.forEach(item => { item.resumeOnLaunch = undefined; });
+    if (this.store.settings.startAutomatically || wasInterrupted) void this.pump();
+  }
+
   private find(id: string): DownloadItem | undefined {
     return this.store.downloads.find(item => item.id === id);
   }
@@ -137,6 +156,41 @@ export class DownloadManager extends EventEmitter {
   private changed(): void {
     this.store.schedule();
     this.emit("changed", this.snapshot());
+  }
+
+  private clearRetry(id: string): void {
+    const timer = this.retryTimers.get(id);
+    if (timer) clearTimeout(timer);
+    this.retryTimers.delete(id);
+  }
+
+  private isRetryable(error: any): boolean {
+    if (error instanceof DownloadHttpError) {
+      return [401, 403, 408, 409, 425, 429].includes(error.status) || error.status >= 500;
+    }
+    const code = String(error?.code || error?.cause?.code || "");
+    const message = String(error?.message || "");
+    return /ECONN|ETIMEDOUT|ENET|EAI_AGAIN|UND_ERR|fetch failed|socket|network/i.test(`${code} ${message}`);
+  }
+
+  private queueRetry(item: DownloadItem, error: any): void {
+    const attempt = (item.retryAttempt || 0) + 1;
+    const delaySeconds = Math.min(60, 5 * 2 ** Math.min(attempt - 1, 4));
+    item.retryAttempt = attempt;
+    item.retryAt = Date.now() + delaySeconds * 1000;
+    item.status = "retrying";
+    item.error = `${error?.message || "Fallo de red"}. Reintentando automáticamente`;
+    this.clearRetry(item.id);
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(item.id);
+      if (!this.find(item.id) || item.status !== "retrying") return;
+      item.status = "queued";
+      item.retryAt = undefined;
+      item.directUrl = undefined;
+      this.changed();
+      void this.pump();
+    }, delaySeconds * 1000);
+    this.retryTimers.set(item.id, timer);
   }
 
   private async inspect(item: DownloadItem): Promise<void> {
@@ -181,6 +235,8 @@ export class DownloadManager extends EventEmitter {
   private async run(item: DownloadItem): Promise<void> {
     const controller = new AbortController();
     this.controllers.set(item.id, controller);
+    let output: ReturnType<typeof createWriteStream> | undefined;
+    let outputError: Error | undefined;
     try {
       item.status = "resolving";
       this.changed();
@@ -210,47 +266,67 @@ export class DownloadManager extends EventEmitter {
         existing = 0;
         item.downloadedBytes = 0;
       }
-      if (!response.ok && response.status !== 206) throw new Error(`El servidor respondió ${response.status}`);
+      if (!response.ok && response.status !== 206) throw new DownloadHttpError(response.status);
       const contentLength = Number(response.headers.get("content-length")) || 0;
       item.totalBytes = existing + contentLength || item.totalBytes;
       item.status = "downloading";
       this.changed();
 
-      const stream = createWriteStream(item.savePath, { flags: existing ? "a" : "w" });
+      output = createWriteStream(item.savePath, { flags: existing ? "a" : "w" });
+      output.on("error", error => {
+        outputError = error;
+        controller.abort();
+      });
       const reader = response.body?.getReader();
       if (!reader) throw new Error("El servidor no entregó datos");
-      let lastTime = Date.now();
-      let lastBytes = item.downloadedBytes;
+      const transferStartedAt = Date.now();
+      const transferStartedBytes = item.downloadedBytes;
+      let lastUiUpdate = transferStartedAt;
+      let samples = [{ at: transferStartedAt, bytes: item.downloadedBytes }];
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (controller.signal.aborted) throw new DOMException("Abortado", "AbortError");
-        if (!stream.write(value)) await new Promise<void>(resolve => stream.once("drain", resolve));
+        if (!output.write(value)) await new Promise<void>(resolve => output!.once("drain", resolve));
         item.downloadedBytes += value.byteLength;
-        const now = Date.now();
-        const elapsed = now - lastTime;
-        if (elapsed >= 350) {
-          item.speed = ((item.downloadedBytes - lastBytes) * 1000) / elapsed;
-          lastTime = now;
-          lastBytes = item.downloadedBytes;
-          this.changed();
-        }
         const limit = this.store.settings.speedLimitKbps * 1024;
         if (limit > 0) {
-          const idealMs = (value.byteLength / limit) * 1000;
-          if (idealMs > 1) await new Promise(resolve => setTimeout(resolve, idealMs));
+          const expectedElapsed = ((item.downloadedBytes - transferStartedBytes) / limit) * 1000;
+          const delay = expectedElapsed - (Date.now() - transferStartedAt);
+          if (delay > 1) await new Promise(resolve => setTimeout(resolve, delay));
+        }
+        const now = Date.now();
+        samples.push({ at: now, bytes: item.downloadedBytes });
+        samples = samples.filter(sample => sample.at >= now - 5000);
+        if (now - lastUiUpdate >= 1000) {
+          const oldest = samples[0];
+          const elapsed = now - oldest.at;
+          item.speed = elapsed > 0 ? ((item.downloadedBytes - oldest.bytes) * 1000) / elapsed : 0;
+          lastUiUpdate = now;
+          this.changed();
         }
       }
       await new Promise<void>((resolve, reject) => {
-        stream.once("error", reject);
-        stream.end(resolve);
+        output!.once("error", reject);
+        output!.end(resolve);
       });
+      output = undefined;
       item.status = "completed";
       item.speed = 0;
+      item.retryAttempt = 0;
+      item.retryAt = undefined;
+      item.error = undefined;
       if (!item.totalBytes) item.totalBytes = item.downloadedBytes;
     } catch (error: any) {
-      if (error?.name === "AbortError" || controller.signal.aborted) {
+      output?.destroy();
+      output = undefined;
+      if (outputError) {
+        item.status = "error";
+        item.error = `No se pudo escribir el archivo: ${outputError.message}`;
+      } else if (error?.name === "AbortError" || controller.signal.aborted) {
         if (item.status !== "paused") item.status = "paused";
+      } else if (this.isRetryable(error)) {
+        this.queueRetry(item, error);
       } else {
         item.status = "error";
         item.error = error?.message || "Error desconocido";
