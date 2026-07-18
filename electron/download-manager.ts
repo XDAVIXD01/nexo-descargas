@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AddResult, DownloadItem, Settings } from "./types.js";
 import { JsonStore } from "./store.js";
-import { resolveLink, supportsUrl } from "./resolvers.js";
+import { BrowserVerificationRequiredError, extractSupportedUrls, resolveLink, supportsUrl, unwrapUrl } from "./resolvers.js";
 
 class DownloadHttpError extends Error {
   constructor(readonly status: number) {
@@ -43,14 +43,15 @@ export class DownloadManager extends EventEmitter {
   }
 
   async add(rawText: string): Promise<AddResult> {
-    const urls = [...new Set(rawText.match(/https?:\/\/[^\s<>"']+/gi) || [])];
+    const rawUrls = [...new Set(rawText.match(/https?:\/\/[^\s<>"')\]]+/gi) || [])];
+    const urls = extractSupportedUrls(rawText);
     const result: AddResult = { added: 0, rejected: [] };
     const addedItems: DownloadItem[] = [];
+    for (const rawUrl of rawUrls) {
+      const normalized = unwrapUrl(rawUrl).replace(/[),.;\]]+$/g, "");
+      if (!supportsUrl(normalized)) result.rejected.push({ url: rawUrl, reason: "Sitio no compatible" });
+    }
     for (const sourceUrl of urls) {
-      if (!supportsUrl(sourceUrl)) {
-        result.rejected.push({ url: sourceUrl, reason: "Sitio no compatible" });
-        continue;
-      }
       if (this.store.downloads.some(item => item.sourceUrl === sourceUrl && item.status !== "cancelled")) {
         result.rejected.push({ url: sourceUrl, reason: "El enlace ya está en la lista" });
         continue;
@@ -210,6 +211,15 @@ export class DownloadManager extends EventEmitter {
       });
     } catch (error: any) {
       if (!this.find(item.id)) return;
+      if (error instanceof BrowserVerificationRequiredError && error.resolved) {
+        const resolved = error.resolved;
+        Object.assign(item, {
+          directUrl: resolved.directUrl,
+          name: resolved.fileName,
+          host: resolved.host,
+          totalBytes: resolved.size
+        });
+      }
       item.status = "error";
       item.error = `No se pudieron consultar los datos: ${error?.message || "error desconocido"}`;
     }

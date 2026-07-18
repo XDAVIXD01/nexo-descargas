@@ -3,6 +3,32 @@ import type { ResolvedLink } from "./types.js";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36";
+const SIZE_FACTORS: Record<string, number> = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
+const SUPPORTED_HOSTS = [
+  "drive.marketcat.io",
+  "rapidshare.co",
+  "www.rapidshare.co",
+  "lolaup.com",
+  "www.lolaup.com",
+  "solred.app",
+  "www.solred.app",
+  "usersdrive.com",
+  "www.usersdrive.com",
+  "megaup.net",
+  "www.megaup.net",
+  "pixeldrain.com",
+  "www.pixeldrain.com",
+  "fireload.com",
+  "www.fireload.com"
+];
+
+export class BrowserVerificationRequiredError extends Error {
+  resolved?: ResolvedLink;
+
+  constructor(host: string) {
+    super(`${host} requiere verificación humana/captcha antes de entregar el enlace directo`);
+  }
+}
 
 async function getHtml(url: string): Promise<{ html: string; finalUrl: string; cookie: string }> {
   const response = await fetch(url, {
@@ -18,7 +44,25 @@ async function getHtml(url: string): Promise<{ html: string; finalUrl: string; c
 }
 
 function cleanName(value: string): string {
-  return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim() || "descarga";
+  return value.replace(/\s+/g, " ").replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim() || "descarga";
+}
+
+function parseSize(text: string): number | undefined {
+  const bytesMatch = text.match(/\b(\d{6,})\b/);
+  if (bytesMatch) return Number(bytesMatch[1]) || undefined;
+  const sizeMatch = text.match(/([\d.]+)\s*(KB|MB|GB|TB)\b/i);
+  return sizeMatch ? Math.round(Number(sizeMatch[1]) * SIZE_FACTORS[sizeMatch[2].toUpperCase()]) : undefined;
+}
+
+export function unwrapUrl(raw: string): string {
+  try {
+    const parsed = new URL(raw);
+    for (const key of ["s", "url", "u", "target"]) {
+      const value = parsed.searchParams.get(key);
+      if (value?.startsWith("http")) return unwrapUrl(value);
+    }
+  } catch {}
+  return raw;
 }
 
 function titleName(html: string): string {
@@ -33,11 +77,17 @@ function titleName(html: string): string {
 
 export function supportsUrl(raw: string): boolean {
   try {
-    const host = new URL(raw).hostname.toLowerCase();
-    return ["drive.marketcat.io", "rapidshare.co", "www.rapidshare.co", "lolaup.com", "www.lolaup.com", "solred.app", "www.solred.app"].includes(host);
+    const host = new URL(unwrapUrl(raw)).hostname.toLowerCase();
+    return SUPPORTED_HOSTS.includes(host);
   } catch {
     return false;
   }
+}
+
+export function extractSupportedUrls(rawText: string): string[] {
+  const urls = rawText.match(/https?:\/\/[^\s<>"')\]]+/gi) || [];
+  const cleaned = urls.map(value => unwrapUrl(value).replace(/[),.;\]]+$/g, ""));
+  return [...new Set(cleaned)].filter(supportsUrl);
 }
 
 async function resolveLolaUp(sourceUrl: string): Promise<ResolvedLink> {
@@ -47,12 +97,11 @@ async function resolveLolaUp(sourceUrl: string): Promise<ResolvedLink> {
   if (!direct) throw new Error("LolaUp no publicó un enlace descargable");
   const label = $("a.download-link").text();
   const sizeMatch = label.match(/\(([\d.]+)\s*(KB|MB|GB|TB)\)/i);
-  const factors: Record<string, number> = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
   return {
     sourceUrl,
     directUrl: new URL(direct, finalUrl).href,
     fileName: titleName(html),
-    size: sizeMatch ? Number(sizeMatch[1]) * factors[sizeMatch[2].toUpperCase()] : undefined,
+    size: sizeMatch ? Number(sizeMatch[1]) * SIZE_FACTORS[sizeMatch[2].toUpperCase()] : undefined,
     host: "LolaUp",
     headers: { referer: finalUrl, "user-agent": USER_AGENT }
   };
@@ -87,13 +136,92 @@ async function resolveSolred(sourceUrl: string): Promise<ResolvedLink> {
   if (!direct) throw new Error("Solred no publicó un enlace descargable");
   const sizeText = detailsDom("button.download-file").text();
   const sizeMatch = sizeText.match(/\(([\d.]+)\s*(KB|MB|GB|TB)\)/i);
-  const factors: Record<string, number> = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
   return {
     sourceUrl,
     directUrl: new URL(direct, finalUrl).href,
     fileName: cleanName(detailsDom(".originalFilename").first().text() || $("title").text().replace(/\s+-\s+Solred.*$/i, "")),
-    size: sizeMatch ? Number(sizeMatch[1]) * factors[sizeMatch[2].toUpperCase()] : undefined,
+    size: sizeMatch ? Number(sizeMatch[1]) * SIZE_FACTORS[sizeMatch[2].toUpperCase()] : undefined,
     host: "Solred",
+    headers: { referer: finalUrl, "user-agent": USER_AGENT }
+  };
+}
+
+async function resolvePixelDrain(sourceUrl: string): Promise<ResolvedLink> {
+  const id = new URL(sourceUrl).pathname.split("/").filter(Boolean).pop();
+  if (!id) throw new Error("PixelDrain no publicó el identificador del archivo");
+  const response = await fetch(`https://pixeldrain.com/api/file/${encodeURIComponent(id)}/info`, {
+    headers: { "user-agent": USER_AGENT, accept: "application/json" }
+  });
+  if (!response.ok) throw new Error(`PixelDrain respondió ${response.status}`);
+  const data = (await response.json()) as { success?: boolean; name?: string; size?: number; can_download?: boolean; message?: string };
+  if (!data.success || data.can_download === false) throw new Error(data.message || "PixelDrain no permite descargar este archivo");
+  return {
+    sourceUrl,
+    directUrl: `https://pixeldrain.com/api/file/${encodeURIComponent(id)}?download`,
+    fileName: cleanName(data.name || id),
+    size: Number(data.size) || undefined,
+    host: "PixelDrain",
+    headers: { referer: sourceUrl, "user-agent": USER_AGENT }
+  };
+}
+
+async function resolveMegaUp(sourceUrl: string): Promise<ResolvedLink> {
+  const { html, finalUrl, cookie } = await getHtml(sourceUrl);
+  const $ = cheerio.load(html);
+  const direct = $("a[href*='download.megaup.net']").attr("href") || html.match(/href=['"]([^'"]*download\.megaup\.net[^'"]+)['"]/)?.[1];
+  const fileName = cleanName($(".download-page h2, h2").first().text() || $("title").text().replace(/\s+-\s+MegaUp.*$/i, ""));
+  const size = parseSize($("table").text() || html);
+  if (!direct) {
+    throw Object.assign(new BrowserVerificationRequiredError("MegaUp"), {
+      resolved: { sourceUrl, directUrl: finalUrl, fileName, size, host: "MegaUp" }
+    });
+  }
+  const resolved = {
+    sourceUrl,
+    directUrl: new URL(direct, finalUrl).href,
+    fileName,
+    size,
+    host: "MegaUp",
+    headers: { referer: finalUrl, "user-agent": USER_AGENT, cookie }
+  };
+  const probe = await fetch(resolved.directUrl, {
+    redirect: "follow",
+    headers: { ...resolved.headers, range: "bytes=0-0" }
+  });
+  await probe.body?.cancel();
+  if (probe.status === 403 || probe.status === 401 || probe.headers.get("content-type")?.includes("text/html")) {
+    throw Object.assign(new BrowserVerificationRequiredError("MegaUp"), { resolved });
+  }
+  return resolved;
+}
+
+async function resolveUsersDrive(sourceUrl: string): Promise<ResolvedLink> {
+  const { html, finalUrl } = await getHtml(sourceUrl);
+  const $ = cheerio.load(html);
+  const fileName = cleanName($(".download .name h4").first().text() || $("title").text().replace(/^Download\s+/i, ""));
+  const size = parseSize($("#fr textarea").text() || $(".download .size").first().text() || html);
+  throw Object.assign(new BrowserVerificationRequiredError("UsersDrive"), {
+    resolved: { sourceUrl, directUrl: finalUrl, fileName, size, host: "UsersDrive" }
+  });
+}
+
+async function resolveFireload(sourceUrl: string): Promise<ResolvedLink> {
+  const { html, finalUrl } = await getHtml(sourceUrl);
+  const $ = cheerio.load(html);
+  const fileName = cleanName($(".file-item .name").first().text() || $("meta[property='og:title']").attr("content")?.replace(/\s+-\s+shared.*$/i, "") || titleName(html));
+  const size = parseSize($(".item-size").first().text() || html);
+  const direct = $("a[href*='/download/'], a[href*='download/view']").attr("href");
+  if (!direct) {
+    throw Object.assign(new BrowserVerificationRequiredError("Fireload"), {
+      resolved: { sourceUrl, directUrl: finalUrl, fileName, size, host: "Fireload" }
+    });
+  }
+  return {
+    sourceUrl,
+    directUrl: new URL(direct, finalUrl).href,
+    fileName,
+    size,
+    host: "Fireload",
     headers: { referer: finalUrl, "user-agent": USER_AGENT }
   };
 }
@@ -184,7 +312,12 @@ async function resolveMarketcat(sourceUrl: string): Promise<ResolvedLink> {
 }
 
 export async function resolveLink(sourceUrl: string): Promise<ResolvedLink> {
+  sourceUrl = unwrapUrl(sourceUrl);
   const host = new URL(sourceUrl).hostname.toLowerCase().replace(/^www\./, "");
+  if (host === "usersdrive.com") return resolveUsersDrive(sourceUrl);
+  if (host === "megaup.net") return resolveMegaUp(sourceUrl);
+  if (host === "pixeldrain.com") return resolvePixelDrain(sourceUrl);
+  if (host === "fireload.com") return resolveFireload(sourceUrl);
   if (host === "lolaup.com") return resolveLolaUp(sourceUrl);
   if (host === "solred.app") return resolveSolred(sourceUrl);
   if (host === "rapidshare.co") return resolveRapidShare(sourceUrl);
@@ -192,4 +325,4 @@ export async function resolveLink(sourceUrl: string): Promise<ResolvedLink> {
   throw new Error(`Host no compatible: ${host}`);
 }
 
-export const resolverInternals = { extractBootstrap, cleanName };
+export const resolverInternals = { extractBootstrap, cleanName, parseSize, unwrapUrl };

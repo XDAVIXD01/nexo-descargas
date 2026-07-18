@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { resolverInternals, supportsUrl } from "./resolvers.js";
+import { extractSupportedUrls, resolverInternals, supportsUrl } from "./resolvers.js";
 
 describe("resolvers", () => {
-  it("reconoce únicamente los cuatro hosts compatibles", () => {
+  it("reconoce los hosts compatibles", () => {
     expect(supportsUrl("https://lolaup.com/abc/file")).toBe(true);
     expect(supportsUrl("https://drive.marketcat.io/drive/s/abc")).toBe(true);
+    expect(supportsUrl("https://usersdrive.com/ftyvzu5d3chm.html")).toBe(true);
+    expect(supportsUrl("https://megaup.net/hash/file.rar")).toBe(true);
+    expect(supportsUrl("https://pixeldrain.com/u/qyKansTK")).toBe(true);
+    expect(supportsUrl("https://www.fireload.com/id/file.rar")).toBe(true);
     expect(supportsUrl("https://example.com/file")).toBe(false);
+  });
+
+  it("extrae enlaces reales desde wrappers ouo.io", () => {
+    const text = "[https://pixeldrain.com/u/qyKansTK](http://ouo.io/qs/x?s=https://pixeldrain.com/u/qyKansTK)";
+    expect(extractSupportedUrls(text)).toEqual(["https://pixeldrain.com/u/qyKansTK"]);
   });
 
   it("extrae bootstrapData aunque contenga objetos anidados", () => {
