@@ -10,6 +10,7 @@ Gestor de descargas de escritorio para Windows, pensado para enlaces públicos d
 - MegaUp
 - PixelDrain
 - Fireload
+- Rootz
 
 Incluye cola persistente y reordenable, descargas simultáneas, pausa y reanudación mediante HTTP Range, reintentos automáticos, medición suavizada de velocidad, tiempos estimados, límite de velocidad, búsqueda, detección de duplicados, extracción de enlaces reales desde wrappers tipo `ouo.io?s=...` y un instalador NSIS.
 

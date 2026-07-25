@@ -19,7 +19,9 @@ const SUPPORTED_HOSTS = [
   "pixeldrain.com",
   "www.pixeldrain.com",
   "fireload.com",
-  "www.fireload.com"
+  "www.fireload.com",
+  "rootz.so",
+  "www.rootz.so"
 ];
 
 export class BrowserVerificationRequiredError extends Error {
@@ -226,6 +228,66 @@ async function resolveFireload(sourceUrl: string): Promise<ResolvedLink> {
   };
 }
 
+function extractRootzPageToken(html: string): string {
+  const token =
+    html.match(/pageToken\\":\\"([^\\"]+)/)?.[1] ||
+    html.match(/pageToken":"([^"]+)/)?.[1];
+  if (!token) throw new Error("Rootz no publicó el token de página");
+  return token;
+}
+
+async function resolveRootz(sourceUrl: string): Promise<ResolvedLink> {
+  const { html, finalUrl } = await getHtml(sourceUrl);
+  const shortId = new URL(finalUrl).pathname.split("/").filter(Boolean).pop();
+  if (!shortId) throw new Error("Rootz no publicó el identificador del archivo");
+  const pageToken = extractRootzPageToken(html);
+  const response = await fetch(`${new URL(finalUrl).origin}/api/files/download-by-short?shortId=${encodeURIComponent(shortId)}`, {
+    headers: {
+      accept: "application/json",
+      referer: finalUrl,
+      "user-agent": USER_AGENT,
+      "x-page-token": pageToken
+    }
+  });
+  if (!response.ok) throw new Error(`Rootz respondió ${response.status}`);
+  const payload = (await response.json()) as {
+    success?: boolean;
+    error?: string;
+    data?: {
+      fileId?: string;
+      fileName?: string;
+      size?: number;
+      downloadAllowed?: boolean;
+      passwordProtected?: boolean;
+      status?: string;
+    };
+  };
+  const data = payload.data;
+  if (!payload.success || !data) throw new Error(payload.error || "Rootz no devolvió metadatos");
+  if (data.status && data.status !== "active") throw new Error(`Rootz reportó el archivo como ${data.status}`);
+  if (data.passwordProtected) {
+    throw Object.assign(new BrowserVerificationRequiredError("Rootz"), {
+      resolved: {
+        sourceUrl,
+        directUrl: finalUrl,
+        fileName: cleanName(data.fileName || titleName(html)),
+        size: Number(data.size) || undefined,
+        host: "Rootz"
+      }
+    });
+  }
+  if (!data.downloadAllowed) throw new Error("Rootz no permite descargar este archivo en este momento");
+  if (!data.fileId) throw new Error("Rootz no devolvió el identificador interno del archivo");
+  return {
+    sourceUrl,
+    directUrl: `${new URL(finalUrl).origin}/api/files/proxy-download/${encodeURIComponent(data.fileId)}`,
+    fileName: cleanName(data.fileName || titleName(html)),
+    size: Number(data.size) || undefined,
+    host: "Rootz",
+    headers: { referer: finalUrl, "user-agent": USER_AGENT }
+  };
+}
+
 async function resolveRapidShare(sourceUrl: string): Promise<ResolvedLink> {
   const { html, finalUrl, cookie } = await getHtml(sourceUrl);
   const $ = cheerio.load(html);
@@ -318,6 +380,7 @@ export async function resolveLink(sourceUrl: string): Promise<ResolvedLink> {
   if (host === "megaup.net") return resolveMegaUp(sourceUrl);
   if (host === "pixeldrain.com") return resolvePixelDrain(sourceUrl);
   if (host === "fireload.com") return resolveFireload(sourceUrl);
+  if (host === "rootz.so") return resolveRootz(sourceUrl);
   if (host === "lolaup.com") return resolveLolaUp(sourceUrl);
   if (host === "solred.app") return resolveSolred(sourceUrl);
   if (host === "rapidshare.co") return resolveRapidShare(sourceUrl);
@@ -325,4 +388,4 @@ export async function resolveLink(sourceUrl: string): Promise<ResolvedLink> {
   throw new Error(`Host no compatible: ${host}`);
 }
 
-export const resolverInternals = { extractBootstrap, cleanName, parseSize, unwrapUrl };
+export const resolverInternals = { extractBootstrap, cleanName, parseSize, unwrapUrl, extractRootzPageToken };

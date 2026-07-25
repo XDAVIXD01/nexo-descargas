@@ -9,6 +9,7 @@ describe("resolvers", () => {
     expect(supportsUrl("https://megaup.net/hash/file.rar")).toBe(true);
     expect(supportsUrl("https://pixeldrain.com/u/qyKansTK")).toBe(true);
     expect(supportsUrl("https://www.fireload.com/id/file.rar")).toBe(true);
+    expect(supportsUrl("https://www.rootz.so/d/oJGHQ")).toBe(true);
     expect(supportsUrl("https://example.com/file")).toBe(false);
   });
 
@@ -20,6 +21,11 @@ describe("resolvers", () => {
   it("extrae bootstrapData aunque contenga objetos anidados", () => {
     const html = `<script>window.bootstrapData = {"loaders":{"shareableLinkPage":{"link":{"hash":"abc"}}}};</script>`;
     expect(resolverInternals.extractBootstrap(html).loaders.shareableLinkPage.link.hash).toBe("abc");
+  });
+
+  it("extrae el pageToken de Rootz desde la respuesta de Next.js", () => {
+    const html = `<script>self.__next_f.push([1,"5:[\\"$\\",\\"$L1b\\",null,{\\"shortId\\":\\"oJGHQ\\",\\"pageToken\\":\\"abc.def\\"}]"])</script>`;
+    expect(resolverInternals.extractRootzPageToken(html)).toBe("abc.def");
   });
 
   it("limpia caracteres inválidos de Windows", () => {

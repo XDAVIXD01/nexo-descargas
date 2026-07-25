@@ -21,7 +21,7 @@ app.innerHTML = `
       <button class="nav" data-filter="errors"><span>!</span> Con errores</button>
       <div class="spacer"></div>
       <button class="nav" id="settings-btn"><span>⚙</span> Preferencias</button>
-      <div class="hosts"><small>SITIOS COMPATIBLES</small><div>Marketcat</div><div>RapidShare</div><div>LolaUp</div><div>Solred</div><div>UsersDrive</div><div>MegaUp</div><div>PixelDrain</div><div>Fireload</div></div>
+      <div class="hosts"><small>SITIOS COMPATIBLES</small><div>Marketcat</div><div>RapidShare</div><div>LolaUp</div><div>Solred</div><div>UsersDrive</div><div>MegaUp</div><div>PixelDrain</div><div>Fireload</div><div>Rootz</div></div>
     </aside>
     <main>
       <section class="hero">
