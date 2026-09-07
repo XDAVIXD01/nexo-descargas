@@ -10,6 +10,7 @@ describe("resolvers", () => {
     expect(supportsUrl("https://pixeldrain.com/u/qyKansTK")).toBe(true);
     expect(supportsUrl("https://www.fireload.com/id/file.rar")).toBe(true);
     expect(supportsUrl("https://www.rootz.so/d/oJGHQ")).toBe(true);
+    expect(supportsUrl("https://www.mediafire.com/file/abc/name.rar/file")).toBe(true);
     expect(supportsUrl("https://example.com/file")).toBe(false);
   });
 
@@ -26,6 +27,10 @@ describe("resolvers", () => {
   it("extrae el pageToken de Rootz desde la respuesta de Next.js", () => {
     const html = `<script>self.__next_f.push([1,"5:[\\"$\\",\\"$L1b\\",null,{\\"shortId\\":\\"oJGHQ\\",\\"pageToken\\":\\"abc.def\\"}]"])</script>`;
     expect(resolverInternals.extractRootzPageToken(html)).toBe("abc.def");
+  });
+
+  it("extrae el tamaño total desde Content-Range", () => {
+    expect(resolverInternals.contentRangeSize("bytes 0-0/5363466240")).toBe(5363466240);
   });
 
   it("limpia caracteres inválidos de Windows", () => {

@@ -21,7 +21,9 @@ const SUPPORTED_HOSTS = [
   "fireload.com",
   "www.fireload.com",
   "rootz.so",
-  "www.rootz.so"
+  "www.rootz.so",
+  "mediafire.com",
+  "www.mediafire.com"
 ];
 
 export class BrowserVerificationRequiredError extends Error {
@@ -54,6 +56,19 @@ function parseSize(text: string): number | undefined {
   if (bytesMatch) return Number(bytesMatch[1]) || undefined;
   const sizeMatch = text.match(/([\d.]+)\s*(KB|MB|GB|TB)\b/i);
   return sizeMatch ? Math.round(Number(sizeMatch[1]) * SIZE_FACTORS[sizeMatch[2].toUpperCase()]) : undefined;
+}
+
+function contentDispositionName(header: string | null): string | undefined {
+  if (!header) return undefined;
+  const utf = header.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const plain = header.match(/filename="?([^";]+)"?/i)?.[1];
+  const value = utf ? decodeURIComponent(utf) : plain;
+  return value ? cleanName(value) : undefined;
+}
+
+function contentRangeSize(header: string | null): number | undefined {
+  const value = header?.match(/\/(\d+)$/)?.[1];
+  return value ? Number(value) || undefined : undefined;
 }
 
 export function unwrapUrl(raw: string): string {
@@ -288,6 +303,45 @@ async function resolveRootz(sourceUrl: string): Promise<ResolvedLink> {
   };
 }
 
+async function resolveMediaFire(sourceUrl: string): Promise<ResolvedLink> {
+  const { html, finalUrl } = await getHtml(sourceUrl);
+  const $ = cheerio.load(html);
+  const direct =
+    $("#downloadButton").attr("href") ||
+    $("a[aria-label='Download file']").attr("href") ||
+    html.match(/href=["'](https?:\/\/download[^"']*mediafire\.com[^"']+)["']/i)?.[1];
+  if (!direct) throw new BrowserVerificationRequiredError("MediaFire");
+
+  const directUrl = new URL(direct, finalUrl).href;
+  let fileName = cleanName(
+    $("#downloadButton").attr("title") ||
+    $(".filename").first().text() ||
+    $("meta[property='og:title']").attr("content") ||
+    $("title").text() ||
+    new URL(directUrl).pathname.split("/").pop() ||
+    "mediafire-descarga"
+  );
+  let size = parseSize($(".details li, .fileInfo, .DownloadInfo").text() || html);
+
+  const probe = await fetch(directUrl, {
+    redirect: "follow",
+    headers: { referer: finalUrl, "user-agent": USER_AGENT, range: "bytes=0-0" }
+  });
+  await probe.body?.cancel();
+  if (!probe.ok && probe.status !== 206) throw new Error(`MediaFire respondió ${probe.status}`);
+  fileName = contentDispositionName(probe.headers.get("content-disposition")) || fileName;
+  size = contentRangeSize(probe.headers.get("content-range")) || Number(probe.headers.get("content-length")) || size;
+
+  return {
+    sourceUrl,
+    directUrl,
+    fileName,
+    size,
+    host: "MediaFire",
+    headers: { referer: finalUrl, "user-agent": USER_AGENT }
+  };
+}
+
 async function resolveRapidShare(sourceUrl: string): Promise<ResolvedLink> {
   const { html, finalUrl, cookie } = await getHtml(sourceUrl);
   const $ = cheerio.load(html);
@@ -381,6 +435,7 @@ export async function resolveLink(sourceUrl: string): Promise<ResolvedLink> {
   if (host === "pixeldrain.com") return resolvePixelDrain(sourceUrl);
   if (host === "fireload.com") return resolveFireload(sourceUrl);
   if (host === "rootz.so") return resolveRootz(sourceUrl);
+  if (host === "mediafire.com") return resolveMediaFire(sourceUrl);
   if (host === "lolaup.com") return resolveLolaUp(sourceUrl);
   if (host === "solred.app") return resolveSolred(sourceUrl);
   if (host === "rapidshare.co") return resolveRapidShare(sourceUrl);
@@ -388,4 +443,4 @@ export async function resolveLink(sourceUrl: string): Promise<ResolvedLink> {
   throw new Error(`Host no compatible: ${host}`);
 }
 
-export const resolverInternals = { extractBootstrap, cleanName, parseSize, unwrapUrl, extractRootzPageToken };
+export const resolverInternals = { extractBootstrap, cleanName, parseSize, unwrapUrl, extractRootzPageToken, contentRangeSize };
