@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 import type { AddResult, DownloadItem, Settings } from "./types.js";
 import { JsonStore } from "./store.js";
 import { BrowserVerificationRequiredError, extractSupportedUrls, resolveLink, supportsUrl, unwrapUrl } from "./resolvers.js";
+import { fetch } from "./http-client.js";
 
 class DownloadHttpError extends Error {
   constructor(readonly status: number) {

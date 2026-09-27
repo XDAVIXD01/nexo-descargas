@@ -1,4 +1,5 @@
-import * as cheerio from "cheerio";
+import * as cheerio from "cheerio/slim";
+import { fetch } from "./http-client.js";
 import type { ResolvedLink } from "./types.js";
 
 const USER_AGENT =
@@ -44,7 +45,7 @@ async function getHtml(url: string): Promise<{ html: string; finalUrl: string; c
     ? response.headers.getSetCookie()
     : [response.headers.get("set-cookie") || ""];
   const cookie = setCookies.map(value => value.split(";")[0]).filter(Boolean).join("; ");
-  return { html: await response.text(), finalUrl: response.url, cookie };
+  return { html: await response.text(), finalUrl: response.url || url, cookie };
 }
 
 function cleanName(value: string): string {
