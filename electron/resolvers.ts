@@ -1,11 +1,14 @@
 import * as cheerio from "cheerio/slim";
 import { fetch } from "./http-client.js";
+import { expandGofile } from "./gofile.js";
 import type { ResolvedLink } from "./types.js";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36";
 const SIZE_FACTORS: Record<string, number> = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
 const SUPPORTED_HOSTS = [
+  "gofile.io",
+  "www.gofile.io",
   "drive.marketcat.io",
   "rapidshare.co",
   "www.rapidshare.co",
@@ -431,6 +434,11 @@ async function resolveMarketcat(sourceUrl: string): Promise<ResolvedLink> {
 export async function resolveLink(sourceUrl: string): Promise<ResolvedLink> {
   sourceUrl = unwrapUrl(sourceUrl);
   const host = new URL(sourceUrl).hostname.toLowerCase().replace(/^www\./, "");
+  if (host === "gofile.io") {
+    const files = await expandGofile(sourceUrl);
+    if (files.length !== 1) throw new Error("GoFile: vuelve a añadir el enlace para importar todos los archivos de la carpeta");
+    return files[0];
+  }
   if (host === "usersdrive.com") return resolveUsersDrive(sourceUrl);
   if (host === "megaup.net") return resolveMegaUp(sourceUrl);
   if (host === "pixeldrain.com") return resolvePixelDrain(sourceUrl);

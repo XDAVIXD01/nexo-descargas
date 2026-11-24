@@ -1,6 +1,7 @@
 const { app } = require("electron");
 const { createServer } = require("node:http");
 const assert = require("node:assert/strict");
+app.on('window-all-closed', () => {});
 
 const payload = Buffer.alloc(128 * 1024, 97);
 let receivedHeaders;
@@ -21,7 +22,33 @@ async function main() {
   const { fetch } = await import("../dist-electron/http-client.js");
   if (process.argv[2]) {
     const { resolveLink } = await import("../dist-electron/resolvers.js");
-    const resolved = await resolveLink(process.argv[2]);
+    let resolved;
+    if (new URL(process.argv[2]).hostname === 'gofile.io') {
+      const { DownloadManager } = await import('../dist-electron/download-manager.js');
+      const { JsonStore } = await import('../dist-electron/store.js');
+      const store = new JsonStore('work/unused-gofile-smoke.json', {
+        downloadDirectory: 'work', concurrentDownloads: 1, speedLimitKbps: 0, startAutomatically: false
+      });
+      store.schedule = () => {};
+      const manager = new DownloadManager(store);
+      const added = await manager.add(process.argv[2]);
+      assert.ok(added.added > 0);
+      assert.equal(added.rejected.length, 0);
+      assert.ok(store.downloads.every(file => file.host === 'GoFile' && file.totalBytes > 0 && file.status === 'queued'));
+      const duplicate = await manager.add(process.argv[2]);
+      assert.equal(duplicate.added, 0);
+      assert.equal(store.downloads.length, added.added);
+      console.log(`GoFile: ${added.added} archivos en cola, nombre/tamaño disponibles y duplicados omitidos`);
+      resolved = await resolveLink(store.downloads[0].sourceUrl);
+      const first = await fetch(resolved.directUrl, { headers: { ...resolved.headers, range: 'bytes=0-31' } });
+      assert.equal(first.status, 206);
+      const bytes = Buffer.from(await first.arrayBuffer());
+      assert.equal(bytes.length, 32);
+      const resumed = await fetch(resolved.directUrl, { headers: { ...resolved.headers, range: 'bytes=16-31' } });
+      assert.equal(resumed.status, 206);
+      assert.deepEqual(Buffer.from(await resumed.arrayBuffer()), bytes.subarray(16));
+      console.log('GoFile: enlace individual renovado y reanudación por bytes verificada');
+    } else resolved = await resolveLink(process.argv[2]);
     assert.ok(resolved.fileName);
     const probe = await fetch(resolved.directUrl, {
       headers: { ...resolved.headers, range: "bytes=0-0" }

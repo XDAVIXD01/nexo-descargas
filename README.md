@@ -12,8 +12,11 @@ Gestor de descargas de escritorio para Windows, pensado para enlaces públicos d
 - Fireload
 - Rootz
 - MediaFire
+- GoFile (carpetas públicas y archivos)
 
 Incluye cola persistente y reordenable, descargas simultáneas, pausa y reanudación mediante HTTP Range, reintentos automáticos, medición suavizada de velocidad, tiempos estimados, límite de velocidad, búsqueda, detección de duplicados, extracción de enlaces reales desde wrappers tipo `ouo.io?s=...` y un instalador NSIS.
+
+Al pegar una carpeta pública de GoFile, se añaden sus archivos y subcarpetas a la cola con nombre y tamaño, en el orden publicado por el sitio. La sesión de invitado se gestiona mediante la web de GoFile en un navegador interno sin acceso a Node.js; los enlaces se renuevan al reanudar. Los contenidos privados o protegidos muestran un error explicativo.
 
 Al cerrar la ventana, NexoDescargas permanece en la bandeja del sistema para que las transferencias continúen. La opción **Salir completamente** está disponible en el menú del icono de la bandeja.
 

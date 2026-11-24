@@ -11,6 +11,7 @@ describe("resolvers", () => {
     expect(supportsUrl("https://www.fireload.com/id/file.rar")).toBe(true);
     expect(supportsUrl("https://www.rootz.so/d/oJGHQ")).toBe(true);
     expect(supportsUrl("https://www.mediafire.com/file/abc/name.rar/file")).toBe(true);
+    expect(supportsUrl("https://gofile.io/d/qOWOeXna")).toBe(true);
     expect(supportsUrl("https://example.com/file")).toBe(false);
   });
 

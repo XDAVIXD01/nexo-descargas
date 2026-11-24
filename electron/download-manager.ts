@@ -7,6 +7,7 @@ import type { AddResult, DownloadItem, Settings } from "./types.js";
 import { JsonStore } from "./store.js";
 import { BrowserVerificationRequiredError, extractSupportedUrls, resolveLink, supportsUrl, unwrapUrl } from "./resolvers.js";
 import { fetch } from "./http-client.js";
+import { expandGofile, isGofile } from "./gofile.js";
 
 class DownloadHttpError extends Error {
   constructor(readonly status: number) {
@@ -52,7 +53,18 @@ export class DownloadManager extends EventEmitter {
       const normalized = unwrapUrl(rawUrl).replace(/[),.;\]]+$/g, "");
       if (!supportsUrl(normalized)) result.rejected.push({ url: rawUrl, reason: "Sitio no compatible" });
     }
+    const candidates: Array<{ sourceUrl: string; resolved?: Awaited<ReturnType<typeof resolveLink>> }> = [];
     for (const sourceUrl of urls) {
+      if (isGofile(sourceUrl)) {
+        try {
+          const files = await expandGofile(sourceUrl);
+          candidates.push(...files.map(resolved => ({ sourceUrl: resolved.sourceUrl, resolved })));
+        } catch (error: any) {
+          result.rejected.push({ url: sourceUrl, reason: error?.message || "No se pudo consultar GoFile" });
+        }
+      } else candidates.push({ sourceUrl });
+    }
+    for (const { sourceUrl, resolved } of candidates) {
       if (this.store.downloads.some(item => item.sourceUrl === sourceUrl && item.status !== "cancelled")) {
         result.rejected.push({ url: sourceUrl, reason: "El enlace ya está en la lista" });
         continue;
@@ -60,19 +72,21 @@ export class DownloadManager extends EventEmitter {
       const item: DownloadItem = {
         id: randomUUID(),
         sourceUrl,
-        name: "Consultando archivo…",
-        host: new URL(sourceUrl).hostname,
-        status: "checking",
+        name: resolved?.fileName || "Consultando archivo…",
+        host: resolved?.host || new URL(sourceUrl).hostname,
+        totalBytes: resolved?.size,
+        status: resolved ? "queued" : "checking",
         downloadedBytes: 0,
         speed: 0,
         addedAt: Date.now()
       };
       this.store.downloads.push(item);
-      addedItems.push(item);
+      if (!resolved) addedItems.push(item);
       result.added++;
     }
     this.changed();
     addedItems.forEach(item => void this.inspect(item));
+    if (this.store.settings.startAutomatically) void this.pump();
     return result;
   }
 

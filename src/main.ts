@@ -21,7 +21,7 @@ app.innerHTML = `
       <button class="nav" data-filter="errors"><span>!</span> Con errores</button>
       <div class="spacer"></div>
       <button class="nav" id="settings-btn"><span>⚙</span> Preferencias</button>
-      <div class="hosts"><small>SITIOS COMPATIBLES</small><div>Marketcat</div><div>RapidShare</div><div>LolaUp</div><div>Solred</div><div>UsersDrive</div><div>MegaUp</div><div>PixelDrain</div><div>Fireload</div><div>Rootz</div><div>MediaFire</div></div>
+      <div class="hosts"><small>SITIOS COMPATIBLES</small><div>Marketcat</div><div>RapidShare</div><div>LolaUp</div><div>Solred</div><div>UsersDrive</div><div>MegaUp</div><div>PixelDrain</div><div>Fireload</div><div>Rootz</div><div>MediaFire</div><div>GoFile</div></div>
     </aside>
     <main>
       <section class="hero">
@@ -172,9 +172,21 @@ function toast(message: string, bad = false): void {
 document.querySelector("#add-btn")!.addEventListener("click", async () => {
   const textarea = document.querySelector<HTMLTextAreaElement>("#links")!;
   if (!textarea.value.trim()) return toast("Pega al menos un enlace.", true);
-  const result = await window.nexo.add(textarea.value);
-  textarea.value = "";
-  toast(`${result.added} enlace${result.added === 1 ? "" : "s"} añadido${result.added === 1 ? "" : "s"}${result.rejected.length ? ` · ${result.rejected.length} omitido(s)` : ""}`, result.added === 0);
+  const button = document.querySelector<HTMLButtonElement>("#add-btn")!;
+  button.disabled = true;
+  button.textContent = "Consultando enlaces…";
+  try {
+    const result = await window.nexo.add(textarea.value);
+    if (result.added > 0) textarea.value = "";
+    toast(result.added === 0 && result.rejected[0]
+      ? result.rejected[0].reason
+      : `${result.added} archivo${result.added === 1 ? "" : "s"} añadido${result.added === 1 ? "" : "s"}${result.rejected.length ? ` · ${result.rejected.length} omitido(s)` : ""}`, result.added === 0);
+  } catch (error: any) {
+    toast(error?.message || "No se pudieron añadir los enlaces", true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "＋ Añadir a la cola";
+  }
 });
 
 document.querySelector("#list")!.addEventListener("click", async event => {
